@@ -1,0 +1,229 @@
+---
+title: "STAT4051 Final Project"
+output: html_document
+date: "2023-12-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+all_star <- read.csv("/Users/justincarter/Downloads/archive (1)/All-Star Selections.csv")
+per_game <- read.csv("/Users/justincarter/Downloads/archive (1)/Player Per Game.csv")
+length(per_game[,1])
+delete_repeats <- function(per_game){
+  temp <- per_game[1,1:35]
+  for(i in 2:length(per_game[,1])){
+    if(per_game[i,]$player != per_game[(i-1),]$player){
+      temp <- rbind(temp, per_game[i, 1:35])
+    }
+  }
+  return(temp)
+}
+
+per_game <- delete_repeats(per_game)
+per_game <- per_game[1:14920, 1:35]
+per_game$allstar <- FALSE
+
+all_star_attribute <- function(all_star, per_game){
+  i <- 1
+  temp <- per_game
+  while(i < length(per_game[,1])){
+    j <- 1
+    year <- per_game[i, ]$season
+    while(j<length(all_star[,1])){
+      if(per_game[i,]$season == all_star[j,]$season){
+        if(per_game[i,]$player == all_star[j,]$player){
+          temp[i,]$allstar = TRUE
+        }
+      }
+      j = j+1
+    }
+    i = i +1
+  }
+  return(temp)
+}
+per_game <- all_star_attribute(all_star, per_game)
+
+fill_nulls <- function(per_game){
+  temp <- per_game
+  for(i in 1:length(per_game[,1])){
+    if(is.na(per_game[i,]$x3p_percent)){
+      temp[i,]$x3p_percent  = 0.3
+    }
+    if(is.na(per_game[i,]$ft_percent)){
+       temp[i,]$ft_percent  = 0.75
+    }
+    if(is.na(per_game[i,]$x2p_percent)){
+      temp[i,]$x2p_percent  = 0.5
+    }
+    if(is.na(per_game[i,]$fg_percent)){
+      temp[i,]$fg_percent  = 0.4
+    }
+    if(is.na(per_game[i,]$e_fg_percent)){
+      temp[i,]$e_fg_percent  = 0.5
+    }
+  }
+  return(temp)
+}
+
+per_game <- fill_nulls(per_game)
+numeric <- per_game[12:35]
+test <- numeric[487:2698,]
+training <- numeric[2699:14920,]
+```
+
+```{r}
+pca1 <- prcomp(x=training, scale=TRUE)
+```
+
+```{r}
+pci <- summary(pca1)$importance
+pve <- pci[2, ]
+plot(y=pve[1:6], x=c(1:6), pch=20, cex=2, xaxt='n', 
+     main='Proportional of Variance Explained',
+     ylab='Individual proportion', xlab='Number of principal components')
+lines(y=pve[1:6], x=c(1:6), lwd=2)
+axis(1, at=1:4)
+```
+
+```{r}
+biplot(pca1, xlabs = rep("", nrow(training)), col=c('black','blue'))
+```
+
+
+```{r}
+PCs <-  data.frame(matrix(ncol = 3, nrow = 12222))
+PCs$PC1 <- pca1$x[,1]
+PCs$PC2 <- pca1$x[,2]
+PCs$label <-per_game[2699:14920,]$allstar
+PCs <- PCs[,4:6]
+```
+
+```{r}
+plot(PCs$PC1, PCs$PC2, pch = 20, col = factor(PCs$label), data = PCs, xlab = "PC1", ylab = "PC2")
+```
+
+```{r}
+centroid_finder <- function(PCs){
+  allstar_PC1_sum <- 0
+  allstar_PC2_sum <- 0
+  non_PC1_sum <- 0
+  non_PC2_sum <- 0
+  j = 0 
+  k = 0
+  for(i in 1:length(PCs[,1])){
+    if(PCs[i, 3] == TRUE){
+      allstar_PC1_sum <-  allstar_PC1_sum + PCs[i, 1]
+      allstar_PC2_sum <-  allstar_PC2_sum + PCs[i, 2]
+      j = j + 1
+    }
+    else{
+      non_PC1_sum <-  non_PC1_sum + PCs[i, 1]
+      non_PC2_sum <-  non_PC2_sum + PCs[i, 2]
+      k = k + 1
+    }
+  }
+  return(list(c(((allstar_PC1_sum / j)), (allstar_PC2_sum / j)), c((non_PC1_sum / k), c((non_PC2_sum) / k))))
+}
+
+centroids <- centroid_finder(PCs)
+centroids[[1]]
+centroids[[2]]
+```
+
+```{r}
+pca2 <- prcomp(x=test, scale=TRUE)
+test_PCs <-  data.frame(matrix(ncol = 3, nrow = 2212))
+test_PCs$PC1 <- pca2$x[,1]
+test_PCs$PC2 <- pca2$x[,2]
+test_PCs$label <-per_game[487:2698,]$allstar
+test_PCs <- test_PCs[,4:6]
+```
+
+
+```{r}
+biplot(pca2, xlabs = rep("", nrow(test)), col=c('black','blue'))
+## Ensure PCs are going in correct direction. We can see PC1 is going in the opposite
+## direction so we will correct this
+
+centroids[[1]][1]  <- - centroids[[1]][1] 
+centroids[[2]][1]  <- - centroids[[2]][1] 
+```
+
+```{r}
+test_PCs$pred_label <- FALSE
+dist <- function(x, y){
+  sqrt(sum((x - y)^2))
+}
+
+label_predictor <- function(test_PCs, centroids){
+   for(i in 1:length(test_PCs[,1])){
+     dist_1 <- dist(c(centroids[[1]][1], centroids[[1]][2]), c(test_PCs[i,]$PC1, test_PCs[i,]$PC2))
+     dist_2 <- dist(c(centroids[[2]][1], centroids[[2]][2]), c(test_PCs[i,]$PC1, test_PCs[i,]$PC2))
+     if(dist_1 < dist_2){
+       test_PCs[i,]$pred_label = TRUE
+     }
+   }
+  return(test_PCs)
+}
+test_PCs <- label_predictor(test_PCs, centroids)
+```
+
+```{r}
+accuracy <- function(test_PCs){
+  n = 0
+  for(i in 1:length(test_PCs[,1])){
+    if(test_PCs[i,]$label == test_PCs[i,]$pred_label){
+      n = n + 1
+    }
+  }
+  return(n/length(test_PCs[,1]))
+}
+
+precision <- function(test_PCs){
+  FP = 0
+  for(i in 1:length(test_PCs[,1])){
+    if(test_PCs[i,]$label == FALSE & test_PCs[i,]$pred_label == TRUE){
+      FP = FP + 1
+    }
+  }
+  TP <- sum(test_PCs$label == TRUE)
+  return((TP / (TP + FP)))
+}
+
+recall <- function(test_PCs){
+  FN = 0
+  for(i in 1:length(test_PCs[,1])){
+    if(test_PCs[i,]$label == TRUE  & test_PCs[i,]$pred_label == FALSE){
+      FN = FN + 1
+    }
+  }
+  TP <- sum(test_PCs$label == TRUE)
+  return((TP / (TP + FN)))
+}
+
+accuracy_1 <- accuracy(test_PCs)
+precsision_1 <- precision(test_PCs)
+recall_1 <- recall(test_PCs)
+```
+
+
+```{r}
+accuracy_1
+precsision_1
+recall_1
+```
+
+
+
+
+
+
+
+
+
+
+
+
